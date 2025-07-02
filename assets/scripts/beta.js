@@ -44,34 +44,23 @@ document.addEventListener("DOMContentLoaded", () => {
     if (savedOS) changeOS(savedOS);
   }
   
-function installJstoreIfNotInstalled() {
-  if (!installedApps.some(a => a.name === "Jstore")) {
-    installApp("Jstore", "apps/icons/jstore.png", "");
-    const app = installedApps.find(a => a.name === "Jstore");
-    if (app) {
-      app.htmlContent = `
-        <div id="jstore-container" style="padding:20px; font-family:sans-serif;">
-          <h1 style="margin-bottom:16px;">Jstore</h1>
-          <div class="upload-section" style="display:flex; gap:8px; align-items:center; margin-bottom:20px;">
-            <input 
-              type="file" 
-              id="jstore-file-input" 
-              accept=".json" 
-              style="flex:1; padding:8px; border:1px solid #ccc; border-radius:4px;"
-            />
-            <button 
-              id="jstore-upload-btn"
-              style="padding:8px 16px; border:none; background:#1e90ff; color:white; border-radius:4px; cursor:pointer;"
-            >Upload JSON</button>
+  // Install Jstore if not installed.
+  function installJstoreIfNotInstalled() {
+    if (!installedApps.some(a => a.name === "Jstore")) {
+      installApp("Jstore", "apps/icons/jstore.png", "");
+      const app = installedApps.find(a => a.name === "Jstore");
+      if (app) {
+        app.htmlContent = `
+          <div id="jstore-container">
+            <h1>Jstore</h1>
+            <input type="text" id="jstore-search" placeholder="Search apps..." oninput="filterJstoreApps(this.value)">
+            <div id="jstore-app-list"></div>
           </div>
-          <div id="jstore-app-list" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(200px,1fr)); gap:12px;"></div>
-        </div>
-      `;
-      localStorage.setItem("installedApps", JSON.stringify(installedApps));
+        `;
+        localStorage.setItem("installedApps", JSON.stringify(installedApps));
+      }
     }
   }
-}
-
   
   // Install Settings app if not installed.
   function installSettingsIfNotInstalled() {
@@ -96,6 +85,11 @@ function installJstoreIfNotInstalled() {
                 <img src="images/icons/settings/sidebar/about.png" alt="About System">
                 <span>About System</span>
               </li>
+              <li data-tab="update">
+  <img src="images/icons/settings/sidebar/update.png" alt="Update">
+  <span>Update</span>
+</li>
+
             </ul>
           </div>
           <div id="settings-content"></div>
@@ -107,6 +101,37 @@ function installJstoreIfNotInstalled() {
 }
 
   
+  // Fetch and render Jstore apps.
+  function loadJstoreApps() {
+    fetch("https://jxoj.github.io/Jxo-OS/apps/appsoffline.json")
+      .then(res => res.ok ? res.json() : Promise.reject("Network error"))
+      .then(apps => {
+        const list = document.getElementById("jstore-app-list");
+        if (!list) return;
+        list.innerHTML = "";
+        apps.forEach(app => {
+          const isInst = installedApps.some(a => a.name === app.name);
+          const btn = document.createElement("button");
+          btn.dataset.icon = app.icon;
+          btn.dataset.url = app.url;
+          btn.textContent = isInst ? "Uninstall" : "Install";
+          btn.onclick = () => {
+            if (isInst) uninstallJstoreApp(app.name, btn);
+            else installJstoreApp(app.name, app.icon, app.url, btn);
+          };
+          const div = document.createElement("div");
+          div.className = "jstore-app-item";
+          div.innerHTML = `<img src="${app.icon}" alt="${app.name}"><span>${app.name}</span>`;
+          div.appendChild(btn);
+          list.appendChild(div);
+        });
+      })
+      .catch(err => {
+        console.error("Failed to load Jstore apps:", err);
+        const list = document.getElementById("jstore-app-list");
+        if (list) list.innerHTML = "<p>Error loading apps.</p>";
+      });
+  }
   
   // Install/uninstall handlers for Jstore apps.
   function installJstoreApp(name, icon, url, btn) {
@@ -173,6 +198,9 @@ function initSettingsApp() {
           break;
         case "about":
           loadAboutSystemTab();
+          break;
+        case "update":          
+          loadUpdateTab();          
           break;
       }
     };
@@ -418,7 +446,7 @@ function showBootScreen() {
     makeResizable(win);
     openApps.push(appId);
     updateTaskbar();
-    if (appId === "jstore") setTimeout(setupJstoreUI, 50);
+    if (appId === "jstore") setTimeout(loadJstoreApps, 100);
     if (appId === "settings") setTimeout(initSettingsApp, 100);
   }
   
@@ -752,12 +780,12 @@ function loadAboutSystemTab() {
       ${localStorage.getItem("devMode") === "true" ? "Disable Dev Mode" : "Enable Dev Mode"}
     </button>
     <button id="switch-channel-btn" style="padding: 10px 20px; margin-left: 10px; background: #047857; color: #d1fae5; border: none; border-radius: 4px; cursor: pointer;">
-      Switch to ${otherChannel.charAt(0).toUpperCase() + otherChannel.slice(1)} Online Channel
+      Switch to ${otherChannel.charAt(0).toUpperCase() + otherChannel.slice(1)} Channel
     </button>
   `;
 
   // Fetch version.json and display the entry matching currentChannel
-  fetch("assets/version.json")
+  fetch("https://jxoj.github.io/Jxo-OS/assets/version.json")
     .then(res => {
       if (!res.ok) throw new Error("Network error");
       return res.json();
@@ -950,64 +978,121 @@ showBootScreen
       updateTaskbar();
       restoreOSTheme();
       loadBackground();
+      checkForUpdate();
       initDevModeListener();
       setInterval(updateClock, 1000);
     });
   }
-  function renderUploadedApps(apps) {
-  const list = document.getElementById("jstore-app-list");
-  list.innerHTML = "";
+  async function loadUpdateTab() {
+  const container = document.getElementById("settings-content");
+  container.innerHTML = `
+    <h2>Update</h2>
+    <div id="update-info" style="background:#333;padding:15px;border-radius:8px;">
+      <p>Loading update info…</p>
+    </div>
+    <button id="do-update-btn" style="margin-top:12px;padding:10px 20px;">Update Now</button>
+  `;
 
-  apps.forEach(app => {
-    let isInstalled = installedApps.some(a => a.name === app.name);
+  // Fetch manifest
+  const manifest = await fetch("https://jxoj.github.io/Jxo-OS/assets/offline-updates.json").then(r=>r.json());
+  document.getElementById("update-info").innerHTML = `
+    <p><strong>${manifest.name}</strong></p>
+    <pre style="white-space:pre-wrap;color:#ddd;">${manifest.log}</pre>
+  `;
 
-    const card = document.createElement("div");
-    card.style = "border:1px solid #ddd; border-radius:6px; padding:12px; display:flex; align-items:center;";
-
-    card.innerHTML = `
-      <img src="${app.icon}" alt="${app.name}" style="width:32px;height:32px;margin-right:12px;">
-      <span style="flex:1;">${app.name}</span>
-    `;
-
-    const btn = document.createElement("button");
-    btn.textContent = isInstalled ? "Uninstall" : "Install";
-    btn.style = "padding:6px 12px; border:none; border-radius:4px; cursor:pointer;" +
-                (isInstalled ? "background:#f44336;color:white;" : "background:#4caf50;color:white;");
-    btn.onclick = () => {
-      if (isInstalled) {
-        uninstallJstoreApp(app.name, btn);
-      } else {
-        installJstoreApp(app.name, app.icon, app.url, btn);
-      }
-      isInstalled = !isInstalled;
-      btn.textContent = isInstalled ? "Uninstall" : "Install";
-      btn.style.background = isInstalled ? "#f44336" : "#4caf50";
-    };
-
-    card.appendChild(btn);
-    list.appendChild(card);
-  });
+  document.getElementById("do-update-btn").onclick = async () => {
+    // 1) Ask user to pick the Jxo‑OS folder:
+    const rootHandle = await window.showDirectoryPicker();
+    // 2) Grant permissions:
+    await rootHandle.requestPermission({ mode: "readwrite" });
+    // 3) Open our standalone updater:
+    window.open("update.html");
+    // Pass manifest via localStorage for update.html to read:
+    localStorage.setItem("pendingUpdate", JSON.stringify(manifest));
+  };
 }
-function setupJstoreUI() {
-  const input = document.getElementById("jstore-file-input");
-  const btn = document.getElementById("jstore-upload-btn");
-  if (!input || !btn) return;
+async function checkForUpdate() {
+  try {
+    const res = await fetch("https://jxoj.github.io/Jxo-OS/assets/offline-updates.json");
+    if (!res.ok) throw new Error("Failed to fetch update manifest");
+    const { version, name } = await res.json();
 
-  btn.addEventListener("click", () => {
-    if (!input.files.length) {
-      alert("Please select an apps.json file first.");
-      return;
+    const lastSeen = localStorage.getItem("lastUpdateCheckVersion");
+    if (lastSeen !== version) {
+      // New update!
+      showUpdateNotification(name);
+      // Save so we don’t spam every reload:
+      localStorage.setItem("lastUpdateCheckVersion", version);
     }
-
-    const reader = new FileReader();
-    reader.onload = evt => {
-      try {
-        const apps = JSON.parse(evt.target.result);
-        renderUploadedApps(apps);
-      } catch (e) {
-        alert("Invalid JSON: " + e.message);
-      }
-    };
-    reader.readAsText(input.files[0]);
-  });
+  } catch (e) {
+    console.error("Update check failed:", e);
+  }
 }
+
+function showUpdateNotification(updateName) {
+  // Create container
+  const n = document.createElement("div");
+  n.className = "update-notification";
+  n.innerHTML = `
+    <div class="notification-content">
+      <p>✅ <strong>${updateName}</strong> is available!</p>
+      <button class="go-settings-btn">Go to Settings → Update</button>
+    </div>
+    <button class="close-btn" aria-label="Close notification">×</button>
+  `;
+
+  // Base styles
+  Object.assign(n.style, {
+    position: "fixed",
+    bottom: "60px",          // sits 60px above bottom (just above a typical taskbar)
+    right: "10px",
+    zIndex: "9999",          // on top of everything
+    background: "#047857",
+    color: "#fff",
+    padding: "12px 16px",
+    borderRadius: "8px",
+    boxShadow: "0 2px 8px rgba(0,0,0,0.3)",
+    display: "flex",
+    alignItems: "center",
+    maxWidth: "300px",
+  });
+
+  // Content styles
+  const content = n.querySelector(".notification-content");
+  Object.assign(content.style, {
+    flex: "1",
+  });
+
+  // “Go to Settings” button
+  const goBtn = n.querySelector(".go-settings-btn");
+  Object.assign(goBtn.style, {
+    marginTop: "8px",
+    padding: "6px 12px",
+    background: "#10B981",
+    border: "none",
+    borderRadius: "4px",
+    color: "#fff",
+    cursor: "pointer",
+  });
+  goBtn.onclick = () => {
+    openSettingsTab("update");
+    n.remove();
+  };
+
+  // Close button
+  const closeBtn = n.querySelector(".close-btn");
+  Object.assign(closeBtn.style, {
+    marginLeft: "12px",
+    background: "transparent",
+    border: "none",
+    color: "#fff",
+    fontSize: "18px",
+    lineHeight: "1",
+    cursor: "pointer",
+  });
+  closeBtn.onclick = () => n.remove();
+
+  // Add to DOM
+  document.body.appendChild(n);
+}
+

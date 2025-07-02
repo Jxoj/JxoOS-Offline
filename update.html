@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Updating…</title>
+  <style>
+    body, html {
+      margin: 0; padding: 0;
+      width: 100%; height: 100%;
+      font-family: sans-serif;
+      background: #f0f2f5;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .card {
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+      width: 360px; padding: 24px;
+      text-align: center;
+    }
+    h1 {
+      margin: 0 0 16px;
+      font-size: 1.5rem; color: #333;
+    }
+    .progress-container {
+      margin: 16px 0; width: 100%;
+    }
+    progress {
+      width: 100%; height: 16px;
+      appearance: none;
+    }
+    progress::-webkit-progress-bar {
+      background: #e0e0e0; border-radius: 8px;
+    }
+    progress::-webkit-progress-value {
+      background: #0078d4; border-radius: 8px;
+    }
+    .status {
+      font-size: 0.9rem; color: #555;
+      margin-top: 8px; min-height: 1.2em;
+    }
+    .btn {
+      margin: 8px 4px 0;
+      background: #e0e0e0; border: none;
+      padding: 8px 16px; border-radius: 6px;
+      cursor: pointer; font-size: 0.9rem; color: #333;
+    }
+    .btn:hover:not(:disabled) { background: #d4d4d4; }
+    .btn:disabled {
+      opacity: 0.5; cursor: default;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Updating JxO-OS</h1>
+    <div class="progress-container">
+      <progress id="progressBar" value="0" max="100"></progress>
+      <div class="status" id="progressText">Ready to start</div>
+    </div>
+    <button class="btn" id="startBtn">Start Update</button>
+    <button class="btn" id="cancelBtn" disabled>Cancel</button>
+  </div>
+
+  <!-- JSZip global -->
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+
+  <script type="module">
+    const startBtn = document.getElementById("startBtn");
+    const cancelBtn = document.getElementById("cancelBtn");
+    const bar = document.getElementById("progressBar");
+    const txt = document.getElementById("progressText");
+    let cancelled = false;
+
+    cancelBtn.addEventListener("click", () => {
+      cancelled = true;
+      txt.innerText = "Cancelling…";
+    });
+
+    startBtn.addEventListener("click", async () => {
+      startBtn.disabled = true;
+      cancelBtn.disabled = false;
+      await runUpdate();
+    });
+
+    async function runUpdate() {
+      const manifest = JSON.parse(localStorage.getItem("pendingUpdate"));
+      const base = "https://jxoj.github.io/Jxo-OS/assets/";
+      let step = 0;
+      const totalSteps = Object.keys(manifest.updatezips).length + 5;
+
+      // Ask for directory up front
+      const root = await window.showDirectoryPicker();
+      await root.requestPermission({ mode: "readwrite" });
+
+      function updateProgress(status, value = null) {
+        txt.innerText = status;
+        if (value !== null) bar.value = value;
+      }
+
+      // 1) Delete old entries
+      for (let name of ["apps","assets","images","index.html","beta.html"]) {
+        if (cancelled) return;
+        await root.removeEntry(name, { recursive: true }).catch(()=>{});
+        step++;
+        updateProgress(`Deleted ${name}`, Math.round((step/totalSteps)*100));
+      }
+
+      // 2) Download & extract zips
+      for (let [key, fname] of Object.entries(manifest.updatezips)) {
+        if (cancelled) return;
+        updateProgress(`Downloading ${fname}…`, Math.round((step/totalSteps)*100));
+        const resp = await fetch(base + fname);
+        const blob = await resp.blob();
+        const zip = await JSZip.loadAsync(blob);
+        step++;
+        updateProgress(`Extracting ${fname}…`, Math.round((step/totalSteps)*100));
+
+        for (let [path, fileObj] of Object.entries(zip.files)) {
+          if (cancelled) return;
+          if (fileObj.dir) continue;
+          const data = await fileObj.async("uint8array");
+          const segments = path.split("/");
+          const fileName = segments.pop();
+          let dir = root;
+          for (let seg of segments) {
+            dir = await dir.getDirectoryHandle(seg, { create: true });
+          }
+          const fh = await dir.getFileHandle(fileName, { create: true });
+          const writable = await fh.createWritable();
+          await writable.write(data);
+          await writable.close();
+        }
+      }
+
+      updateProgress("Update complete! Reloading…", 100);
+      setTimeout(() => location.href = "index.html", 1500);
+    }
+  </script>
+</body>
+</html>
