@@ -5,8 +5,10 @@
   <title>Updating…</title>
   <style>
     body, html {
-      margin: 0; padding: 0;
-      width: 100%; height: 100%;
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
       font-family: sans-serif;
       background: #f0f2f5;
       display: flex;
@@ -17,45 +19,93 @@
       background: #fff;
       border-radius: 12px;
       box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-      width: 360px; padding: 24px;
+      width: 360px;
+      padding: 24px;
       text-align: center;
     }
     h1 {
       margin: 0 0 16px;
-      font-size: 1.5rem; color: #333;
+      font-size: 1.5rem;
+      color: #333;
     }
     .progress-container {
-      margin: 16px 0; width: 100%;
+      margin: 16px 0;
+      width: 100%;
     }
     progress {
-      width: 100%; height: 16px;
+      width: 100%;
+      height: 16px;
       appearance: none;
     }
     progress::-webkit-progress-bar {
-      background: #e0e0e0; border-radius: 8px;
+      background: #e0e0e0;
+      border-radius: 8px;
     }
     progress::-webkit-progress-value {
-      background: #0078d4; border-radius: 8px;
+      background: #0078d4;
+      border-radius: 8px;
     }
     .status {
-      font-size: 0.9rem; color: #555;
-      margin-top: 8px; min-height: 1.2em;
+      font-size: 0.9rem;
+      color: #555;
+      margin-top: 8px;
+      min-height: 1.2em;
     }
     .btn {
       margin: 8px 4px 0;
-      background: #e0e0e0; border: none;
-      padding: 8px 16px; border-radius: 6px;
-      cursor: pointer; font-size: 0.9rem; color: #333;
+      background: #e0e0e0;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      color: #333;
     }
-    .btn:hover:not(:disabled) { background: #d4d4d4; }
+    .btn:hover:not(:disabled) {
+      background: #d4d4d4;
+    }
     .btn:disabled {
-      opacity: 0.5; cursor: default;
+      opacity: 0.5;
+      cursor: default;
+    }
+    /* Modal styles */
+    .modal-backdrop {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+    .modal {
+      background: #fff;
+      border-radius: 8px;
+      padding: 20px;
+      max-width: 300px;
+      text-align: center;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    }
+    .modal p {
+      margin-bottom: 16px;
+      color: #333;
+    }
+    .modal button {
+      padding: 8px 16px;
+      border: none;
+      background: #0078d4;
+      color: #fff;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    .modal button:hover {
+      background: #005ea6;
     }
   </style>
 </head>
 <body>
   <div class="card">
-    <h1>Updating JxO-OS</h1>
+    <h1>Updating Jxo‑OS</h1>
     <div class="progress-container">
       <progress id="progressBar" value="0" max="100"></progress>
       <div class="status" id="progressText">Ready to start</div>
@@ -64,9 +114,7 @@
     <button class="btn" id="cancelBtn" disabled>Cancel</button>
   </div>
 
-  <!-- JSZip global -->
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-
   <script type="module">
     const startBtn = document.getElementById("startBtn");
     const cancelBtn = document.getElementById("cancelBtn");
@@ -85,13 +133,35 @@
       await runUpdate();
     });
 
+    // Helper to show a modal dialog with an OK button
+    function showModal(message) {
+      return new Promise(resolve => {
+        const backdrop = document.createElement("div");
+        backdrop.className = "modal-backdrop";
+        backdrop.innerHTML = `
+          <div class="modal">
+            <p>${message}</p>
+            <button id="modalOk">OK</button>
+          </div>`;
+        document.body.appendChild(backdrop);
+        backdrop.querySelector("#modalOk").addEventListener("click", () => {
+          document.body.removeChild(backdrop);
+          resolve();
+        });
+      });
+    }
+
     async function runUpdate() {
       const manifest = JSON.parse(localStorage.getItem("pendingUpdate"));
-      const base = "https://jxoj.github.io/Jxo-OS/assets/";
-      let step = 0;
-      const totalSteps = Object.keys(manifest.updatezips).length + 5;
+      if (!manifest) {
+        txt.innerText = "Error: no pendingUpdate manifest found.";
+        return;
+      }
 
-      // Ask for directory up front
+      const keys = Object.keys(manifest.updatezips);
+      const totalSteps = keys.length + 8;
+      let step = 0;
+
       const root = await window.showDirectoryPicker();
       await root.requestPermission({ mode: "readwrite" });
 
@@ -103,20 +173,68 @@
       // 1) Delete old entries
       for (let name of ["apps","assets","images","index.html","beta.html"]) {
         if (cancelled) return;
-        await root.removeEntry(name, { recursive: true }).catch(()=>{});
+        await root.removeEntry(name, { recursive: true }).catch(() => {});
         step++;
-        updateProgress(`Deleted ${name}`, Math.round((step/totalSteps)*100));
+        updateProgress(`Deleted ${name}`, Math.round((step / totalSteps) * 100));
       }
 
-      // 2) Download & extract zips
-      for (let [key, fname] of Object.entries(manifest.updatezips)) {
+      // 2) Check for images.zip; if missing, trigger download then prompt user via modal
+      let imgHandle;
+      updateProgress("Checking for images.zip…", Math.round((step / totalSteps) * 100));
+      while (!cancelled) {
+        try {
+          imgHandle = await root.getFileHandle("images.zip");
+          break;
+        } catch {
+          // open download link
+          window.open(manifest.imagesUrl, "_blank");
+          // prompt user to place the file
+          await showModal("Move images.zip to the folder Jxo‑OS is in then click OK to retry.");
+        }
+      }
+      if (cancelled) return;
+
+      // 3) Extract images.zip into /images
+      step++;
+      updateProgress("Extracting images.zip…", Math.round((step / totalSteps) * 100));
+      const imgFile = await imgHandle.getFile();
+      const imgZip = await JSZip.loadAsync(await imgFile.arrayBuffer());
+      const imgDir = await root.getDirectoryHandle("images", { create: true });
+      for (let [path, fileObj] of Object.entries(imgZip.files)) {
         if (cancelled) return;
-        updateProgress(`Downloading ${fname}…`, Math.round((step/totalSteps)*100));
-        const resp = await fetch(base + fname);
-        const blob = await resp.blob();
-        const zip = await JSZip.loadAsync(blob);
+        if (fileObj.dir) continue;
+        const data = await fileObj.async("uint8array");
+        const segments = path.split("/");
+        const fileName = segments.pop();
+        let dir = imgDir;
+        for (let seg of segments) {
+          dir = await dir.getDirectoryHandle(seg, { create: true });
+        }
+        const fh = await dir.getFileHandle(fileName, { create: true });
+        const w = await fh.createWritable();
+        await w.write(data);
+        await w.close();
+      }
+
+      // 4) Auto-delete images.zip
+      step++;
+      await root.removeEntry("images.zip").catch(() => {});
+      updateProgress("Cleaned up images.zip", Math.round((step / totalSteps) * 100));
+
+      // 5) Download & extract each update ZIP
+      for (let key of keys) {
+        if (cancelled) return;
+        const url = manifest.updatezips[key];
+        updateProgress(`Downloading ${key}.zip…`, Math.round((step / totalSteps) * 100));
+        const resp = await fetch(url);
+        const zip = await JSZip.loadAsync(await resp.blob());
         step++;
-        updateProgress(`Extracting ${fname}…`, Math.round((step/totalSteps)*100));
+        updateProgress(`Extracting ${key}.zip…`, Math.round((step / totalSteps) * 100));
+
+        let target = root;
+        if (key !== "main") {
+          target = await root.getDirectoryHandle(key, { create: true });
+        }
 
         for (let [path, fileObj] of Object.entries(zip.files)) {
           if (cancelled) return;
@@ -124,17 +242,18 @@
           const data = await fileObj.async("uint8array");
           const segments = path.split("/");
           const fileName = segments.pop();
-          let dir = root;
+          let dir = target;
           for (let seg of segments) {
             dir = await dir.getDirectoryHandle(seg, { create: true });
           }
           const fh = await dir.getFileHandle(fileName, { create: true });
-          const writable = await fh.createWritable();
-          await writable.write(data);
-          await writable.close();
+          const w = await fh.createWritable();
+          await w.write(data);
+          await w.close();
         }
       }
 
+      // 6) Complete & reload
       updateProgress("Update complete! Reloading…", 100);
       setTimeout(() => location.href = "index.html", 1500);
     }
